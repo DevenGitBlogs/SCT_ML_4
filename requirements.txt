@@ -1,0 +1,809 @@
+pyautogui
+numpy
+opencv-python
+mediapipe
+joblib
+scikit-learn
+streamlit
+
+mediapipe==0.10.14
+numpy==1.26.4
+opencv-python==4.12.0.88
+joblib==1.5.2
+PyAutoGUI==0.9.54
+scikit-learn==1.3.0
+scipy==1.16.2
+
+/// hand_gesture_reader.py version 1
+import cv2
+import mediapipe as mp
+
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+
+hands = mp_hands.Hands(
+    static_image_mode=False,
+    max_num_hands=1,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
+)
+
+cap = cv2.VideoCapture(0)
+
+# Tip and base indices for fingers in Mediapipe
+tips = [4, 8, 12, 16, 20]
+bases = [2, 5, 9, 13, 17]
+
+def count_fingers(hand_landmarks):
+    fingers_up = 0
+
+    # Thumb (special case, compare x for right hand, or flip logic)
+    if hand_landmarks.landmark[tips[0]].x < hand_landmarks.landmark[bases[0]].x:
+        fingers_up += 1
+
+    # Other fingers
+    for tip, base in zip(tips[1:], bases[1:]):
+        if hand_landmarks.landmark[tip].y < hand_landmarks.landmark[base].y:
+            fingers_up += 1
+    return fingers_up
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+    frame = cv2.flip(frame, 1)
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    result = hands.process(rgb)
+    image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+    gesture = "Unknown"
+    if result.multi_hand_landmarks:
+        hand_landmarks = result.multi_hand_landmarks[0]
+        mp_drawing.draw_landmarks(image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+        fingers = count_fingers(hand_landmarks)
+        
+        # Map finger count to gesture
+        if fingers == 0:
+            gesture = "Closed"
+        elif fingers == 1:
+            gesture = "One"
+        elif fingers == 2:
+            gesture = "Two"
+        elif fingers == 3:
+            gesture = "Three"
+        elif fingers == 4:
+            gesture = "Four"
+        elif fingers == 5:
+            gesture = "Open"
+
+    cv2.putText(image, f'{gesture}', (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 2)
+    cv2.imshow("Finger Counter", image)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+
+//// comiit 1 ended here
+
+//// commit 2 starts here
+import cv2
+import mediapipe as mp
+import numpy as np
+import time
+
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+
+hands = mp_hands.Hands(
+    static_image_mode=False,
+    max_num_hands=1,
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.7
+)
+
+cap = cv2.VideoCapture(0)
+
+def fingers_up(hand_landmarks, handedness):
+    """Return number of fingers up"""
+    tips = [4, 8, 12, 16, 20]
+    pip_joints = [2, 6, 10, 14, 18]  # base joints
+    count = 0
+
+    # Thumb check
+    if handedness == 'Right':
+        if hand_landmarks.landmark[tips[0]].x < hand_landmarks.landmark[pip_joints[0]].x:
+            count += 1
+    else:
+        if hand_landmarks.landmark[tips[0]].x > hand_landmarks.landmark[pip_joints[0]].x:
+            count += 1
+
+    # Fingers (vertical)
+    for tip, pip in zip(tips[1:], pip_joints[1:]):
+        if hand_landmarks.landmark[tip].y < hand_landmarks.landmark[pip].y:
+            count += 1
+    return count
+
+# For HELLO detection
+prev_x = None
+direction = 0  # -1 left, +1 right
+wave_count = 0
+last_wave_time = 0
+show_hello_until = 0
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    frame = cv2.flip(frame, 1)
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    result = hands.process(rgb)
+    image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+    gesture_text = "Deven, show your hands"
+    text_color = (0, 255, 255)
+    rect_color = (30, 30, 30)
+
+    hello_detected = False
+
+    if result.multi_hand_landmarks and result.multi_handedness:
+        hand_landmarks = result.multi_hand_landmarks[0]
+        hand_label = result.multi_handedness[0].classification[0].label
+        mp_drawing.draw_landmarks(image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+        count = fingers_up(hand_landmarks, hand_label)
+        wrist_x = hand_landmarks.landmark[0].x
+
+        # HELLO detection logic
+        if count == 5:  # hand fully open
+            if prev_x is not None:
+                speed = wrist_x - prev_x
+                current_dir = 1 if speed > 0.02 else -1 if speed < -0.02 else 0
+
+                if current_dir != 0 and current_dir != direction:
+                    wave_count += 1
+                    direction = current_dir
+                    last_wave_time = time.time()
+
+                # Reset wave count if idle
+                if time.time() - last_wave_time > 1.5:
+                    wave_count = 0
+                    direction = 0
+
+                if wave_count >= 3:
+                    hello_detected = True
+                    show_hello_until = time.time() + 3
+                    wave_count = 0
+
+            prev_x = wrist_x
+        else:
+            prev_x = None
+            wave_count = 0
+            direction = 0
+
+        # Set gesture text only if HELLO not showing
+        if not hello_detected and time.time() < show_hello_until:
+            hello_detected = True  # maintain HELLO display
+
+        if hello_detected:
+            gesture_text = 'Deven saying "HELLO"'
+            text_color = (0, 200, 255)
+        else:
+            if count == 0:
+                gesture_text = "Closed"
+                text_color = (0, 0, 255)
+            elif count == 5:
+                gesture_text = "Open"
+                text_color = (0, 255, 0)
+            else:
+                gesture_text = str(count)
+                text_color = (255, 0, 0)
+
+    # Draw semi-transparent rectangle
+    (w, h), _ = cv2.getTextSize(gesture_text, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 2)
+    overlay = image.copy()
+    cv2.rectangle(overlay, (40, 30), (40 + w + 20, 30 + h + 20), rect_color, -1)
+    alpha = 0.7
+    cv2.addWeighted(overlay, alpha, image, 1 - alpha, 0, image)
+
+    # Draw text with shadow
+    x, y = 50, 30 + h
+    for dx, dy in [(2,2), (-2,2), (2,-2), (-2,-2)]:
+        cv2.putText(image, gesture_text, (x+dx, y+dy), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0,0,0), 5)
+    cv2.putText(image, gesture_text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1.5, text_color, 3)
+
+    cv2.imshow("Hand Gesture", image)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+
+/// commit 2 ends here 
+
+///  commit 3 starts here 
+
+import cv2
+import mediapipe as mp
+import numpy as np
+import time
+
+# --- Mediapipe Hands ---
+mp_hands = mp.solutions.hands
+mp_drawing = mp.solutions.drawing_utils
+
+hands = mp_hands.Hands(
+    static_image_mode=False,
+    max_num_hands=1,
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.7
+)
+
+cap = cv2.VideoCapture(0)
+
+# --- Helper: Count fingers ---
+def fingers_up(hand_landmarks, handedness):
+    tips = [4, 8, 12, 16, 20]
+    pip = [2, 6, 10, 14, 18]
+    count = 0
+
+    # Thumb
+    if handedness == 'Right':
+        if hand_landmarks.landmark[tips[0]].x < hand_landmarks.landmark[pip[0]].x:
+            count += 1
+    else:
+        if hand_landmarks.landmark[tips[0]].x > hand_landmarks.landmark[pip[0]].x:
+            count += 1
+
+    # Other fingers
+    for tip_idx, pip_idx in zip(tips[1:], pip[1:]):
+        if hand_landmarks.landmark[tip_idx].y < hand_landmarks.landmark[pip_idx].y:
+            count += 1
+    return count
+
+# --- HELLO Detection Variables ---
+prev_x = None
+direction = 0  # -1 left, +1 right
+wave_count = 0
+last_wave_time = 0
+locked_until = 0
+show_hello = False
+
+# --- OK Detection Variables ---
+ok_stable_frames = 0
+OK_FRAMES_REQUIRED = 5
+
+# --- Finger count smoothing ---
+finger_count_history = []
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    frame = cv2.flip(frame, 1)
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    result = hands.process(rgb)
+    image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    current_time = time.time()
+
+    gesture_text = "Deven, show your hands"
+    text_color = (0, 255, 255)
+    rect_color = (30, 30, 30)
+
+    hello_detected = False
+    ok_detected = False
+
+    if result.multi_hand_landmarks and result.multi_handedness:
+        hand_landmarks = result.multi_hand_landmarks[0]
+        hand_label = result.multi_handedness[0].classification[0].label
+        mp_drawing.draw_landmarks(image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+        count = fingers_up(hand_landmarks, hand_label)
+        finger_count_history.append(count)
+        if len(finger_count_history) > 3:
+            finger_count_history.pop(0)
+        smoothed_count = round(sum(finger_count_history)/len(finger_count_history))
+
+        wrist_x = hand_landmarks.landmark[0].x
+
+        # --- HELLO Detection ---
+        if current_time >= locked_until:
+            if smoothed_count == 5:  # open hand
+                if prev_x is not None:
+                    dx = wrist_x - prev_x
+                    current_dir = 1 if dx > 0.02 else -1 if dx < -0.02 else 0
+
+                    if current_dir != 0 and current_dir != direction:
+                        wave_count += 1
+                        direction = current_dir
+                        last_wave_time = current_time
+
+                    if current_time - last_wave_time > 1.5:
+                        wave_count = 0
+                        direction = 0
+
+                    if wave_count >= 3:
+                        hello_detected = True
+                        show_hello = True
+                        locked_until = current_time + 3  # 3 sec lock
+                        wave_count = 0
+                prev_x = wrist_x
+            else:
+                prev_x = None
+                wave_count = 0
+                direction = 0
+
+            # --- OK Detection ---
+            thumb_tip = hand_landmarks.landmark[4]
+            index_tip = hand_landmarks.landmark[8]
+            middle_tip = hand_landmarks.landmark[12]
+            ring_tip = hand_landmarks.landmark[16]
+            pinky_tip = hand_landmarks.landmark[20]
+            wrist = hand_landmarks.landmark[0]
+            index_mcp = hand_landmarks.landmark[5]
+
+            dist_thumb_index = np.linalg.norm(np.array([thumb_tip.x, thumb_tip.y]) - np.array([index_tip.x, index_tip.y]))
+            hand_size = np.linalg.norm(np.array([wrist.x, wrist.y]) - np.array([index_mcp.x, index_mcp.y]))
+            normalized_dist = dist_thumb_index / hand_size
+
+            # Other fingers folded
+            other_fingers_folded = (middle_tip.y > hand_landmarks.landmark[10].y and
+                                    ring_tip.y > hand_landmarks.landmark[14].y and
+                                    pinky_tip.y > hand_landmarks.landmark[18].y)
+
+            if normalized_dist < 0.25 and smoothed_count >= 3 and other_fingers_folded:
+                ok_stable_frames += 1
+            else:
+                ok_stable_frames = 0
+
+            if ok_stable_frames >= OK_FRAMES_REQUIRED:
+                ok_detected = True
+                locked_until = current_time + 2
+                ok_stable_frames = 0
+
+        # --- Set gesture text ---
+        if hello_detected or (show_hello and current_time < locked_until):
+            gesture_text = 'Deven saying "HELLO" :)'
+            text_color = (0, 200, 255)
+        elif ok_detected:
+            gesture_text = 'Deven says OK :)'
+            text_color = (0, 255, 255)
+        elif current_time >= locked_until:
+            if smoothed_count == 0:
+                gesture_text = "Closed"
+                text_color = (0, 0, 255)
+            elif smoothed_count == 5:
+                gesture_text = "Open"
+                text_color = (0, 255, 0)
+            else:
+                gesture_text = str(smoothed_count)
+                text_color = (255, 0, 0)
+
+    # --- Draw rectangle + shadowed text ---
+    (w, h), _ = cv2.getTextSize(gesture_text, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 2)
+    overlay = image.copy()
+    cv2.rectangle(overlay, (40, 30), (40 + w + 20, 30 + h + 20), rect_color, -1)
+    cv2.addWeighted(overlay, 0.7, image, 0.3, 0, image)
+
+    x, y = 50, 30 + h
+    for dx, dy in [(2,2), (-2,2), (2,-2), (-2,-2)]:
+        cv2.putText(image, gesture_text, (x+dx, y+dy), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0,0,0), 5)
+    cv2.putText(image, gesture_text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1.5, text_color, 3)
+
+    cv2.imshow("Hand Gesture", image)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+
+//// commit 3 ended here
+
+/// commit 4 starts here
+
+import cv2
+import mediapipe as mp
+import numpy as np
+import time
+from collections import deque
+
+class GestureRecognizer:
+    def __init__(self):
+        # Mediapipe hands
+        self.mp_hands = mp.solutions.hands
+        self.mp_draw = mp.solutions.drawing_utils
+        self.hands = self.mp_hands.Hands(
+            static_image_mode=False,
+            max_num_hands=1,
+            min_detection_confidence=0.7,
+            min_tracking_confidence=0.7
+        )
+
+        # HELLO detection
+        self.prev_wrist_x = None
+        self.direction = 0
+        self.wave_count = 0
+        self.last_wave_time = 0
+        self.show_hello_until = 0
+
+        # OK detection
+        self.ok_stable_frames = 0
+        self.OK_FRAMES_REQUIRED = 5
+        self.show_ok_until = 0
+
+        # Finger smoothing
+        self.finger_history = deque(maxlen=3)
+
+    # Count fingers up
+    def fingers_up(self, landmarks, handedness):
+        tips = [4, 8, 12, 16, 20]
+        pip = [2, 6, 10, 14, 18]
+        count = 0
+
+        # Thumb
+        if handedness == 'Right':
+            if landmarks.landmark[tips[0]].x < landmarks.landmark[pip[0]].x:
+                count += 1
+        else:
+            if landmarks.landmark[tips[0]].x > landmarks.landmark[pip[0]].x:
+                count += 1
+
+        # Other fingers
+        for tip_idx, pip_idx in zip(tips[1:], pip[1:]):
+            if landmarks.landmark[tip_idx].y < landmarks.landmark[pip_idx].y:
+                count += 1
+        return count
+
+    # HELLO detection
+    def detect_hello(self, landmarks, fingers):
+        current_time = time.time()
+        if fingers < 5:
+            # Reset if hand not fully open
+            self.prev_wrist_x = None
+            self.wave_count = 0
+            self.direction = 0
+            return current_time < self.show_hello_until
+
+        wrist_x = landmarks.landmark[0].x
+
+        if self.prev_wrist_x is not None:
+            dx = wrist_x - self.prev_wrist_x
+            current_dir = 1 if dx > 0.02 else -1 if dx < -0.02 else 0
+
+            if current_dir != 0 and current_dir != self.direction:
+                self.wave_count += 1
+                self.direction = current_dir
+                self.last_wave_time = current_time
+
+            if current_time - self.last_wave_time > 1.5:
+                self.wave_count = 0
+                self.direction = 0
+
+            if self.wave_count >= 3:
+                self.show_hello_until = current_time + 3  # Show for 3 sec
+                self.wave_count = 0
+                return True
+
+        self.prev_wrist_x = wrist_x
+        return current_time < self.show_hello_until
+
+    # OK detection
+    def detect_ok(self, landmarks, fingers):
+        current_time = time.time()
+        thumb_tip = landmarks.landmark[4]
+        index_tip = landmarks.landmark[8]
+        middle_tip = landmarks.landmark[12]
+        ring_tip = landmarks.landmark[16]
+        pinky_tip = landmarks.landmark[20]
+        wrist = landmarks.landmark[0]
+        index_mcp = landmarks.landmark[5]
+
+        # Distance normalized by hand size
+        dist_thumb_index = np.linalg.norm(np.array([thumb_tip.x, thumb_tip.y]) - np.array([index_tip.x, index_tip.y]))
+        hand_size = np.linalg.norm(np.array([wrist.x, wrist.y]) - np.array([index_mcp.x, index_mcp.y]))
+        normalized_dist = dist_thumb_index / hand_size
+
+        # Other fingers folded
+        other_fingers_folded = (middle_tip.y > landmarks.landmark[10].y and
+                                ring_tip.y > landmarks.landmark[14].y and
+                                pinky_tip.y > landmarks.landmark[18].y)
+
+        if normalized_dist < 0.25 and fingers >= 3 and other_fingers_folded:
+            self.ok_stable_frames += 1
+        else:
+            self.ok_stable_frames = 0
+
+        if self.ok_stable_frames >= self.OK_FRAMES_REQUIRED:
+            self.show_ok_until = current_time + 3  # Show for 3 sec
+            self.ok_stable_frames = 0
+            return True
+
+        return current_time < self.show_ok_until
+
+    # Get gesture text
+    def get_gesture_text(self, landmarks, handedness):
+        fingers = self.fingers_up(landmarks, handedness)
+        self.finger_history.append(fingers)
+        smoothed_fingers = round(sum(self.finger_history) / len(self.finger_history))
+
+        # Priority: OK > HELLO > Basic
+        if self.detect_ok(landmarks, smoothed_fingers):
+            return 'Deven says OK :)', (0, 255, 255)
+        elif self.detect_hello(landmarks, smoothed_fingers):
+            return 'Deven saying "HELLO" :)', (0, 200, 255)
+        else:
+            if smoothed_fingers == 0:
+                return "Closed", (0, 0, 255)
+            elif smoothed_fingers == 5:
+                return "Open", (0, 255, 0)
+            else:
+                return str(smoothed_fingers), (255, 0, 0)
+
+def main():
+    cap = cv2.VideoCapture(0)
+    recognizer = GestureRecognizer()
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        frame = cv2.flip(frame, 1)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        result = recognizer.hands.process(rgb)
+        image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+        gesture_text = "Deven, show your hands"
+        text_color = (0, 255, 255)
+        rect_color = (30, 30, 30)
+
+        if result.multi_hand_landmarks and result.multi_handedness:
+            landmarks = result.multi_hand_landmarks[0]
+            handedness = result.multi_handedness[0].classification[0].label
+
+            recognizer.mp_draw.draw_landmarks(image, landmarks, recognizer.mp_hands.HAND_CONNECTIONS)
+            gesture_text, text_color = recognizer.get_gesture_text(landmarks, handedness)
+
+        # Draw rectangle + shadowed text
+        (w, h), _ = cv2.getTextSize(gesture_text, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 2)
+        overlay = image.copy()
+        cv2.rectangle(overlay, (40, 30), (40 + w + 20, 30 + h + 20), rect_color, -1)
+        cv2.addWeighted(overlay, 0.7, image, 0.3, 0, image)
+
+        x, y = 50, 30 + h
+        for dx, dy in [(2,2), (-2,2), (2,-2), (-2,-2)]:
+            cv2.putText(image, gesture_text, (x+dx, y+dy), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0,0,0), 5)
+        cv2.putText(image, gesture_text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1.5, text_color, 3)
+
+        cv2.imshow("Hand Gesture", image)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()
+
+
+//// commit 4 ended here
+
+//// commit  5
+
+import cv2
+import mediapipe as mp
+import numpy as np
+import time
+from collections import deque
+
+class GestureRecognizer:
+    def __init__(self):
+        # Hands
+        self.mp_hands = mp.solutions.hands
+        self.mp_draw = mp.solutions.drawing_utils
+        self.hands = self.mp_hands.Hands(
+            static_image_mode=False,
+            max_num_hands=1,
+            min_detection_confidence=0.7,
+            min_tracking_confidence=0.7
+        )
+
+        # Face
+        self.mp_face = mp.solutions.face_detection
+        self.face_detection = self.mp_face.FaceDetection(min_detection_confidence=0.7)
+
+        # Gesture detection states
+        self.prev_wrist_x = None
+        self.direction = 0
+        self.wave_count = 0
+        self.last_wave_time = 0
+        self.show_hello_until = 0
+
+        self.ok_stable_frames = 0
+        self.OK_FRAMES_REQUIRED = 5
+        self.show_ok_until = 0
+
+        self.finger_history = deque(maxlen=3)
+
+    # Count fingers
+    def fingers_up(self, landmarks, handedness):
+        tips = [4, 8, 12, 16, 20]
+        pip = [2, 6, 10, 14, 18]
+        count = 0
+        if handedness == 'Right':
+            if landmarks.landmark[tips[0]].x < landmarks.landmark[pip[0]].x:
+                count += 1
+        else:
+            if landmarks.landmark[tips[0]].x > landmarks.landmark[pip[0]].x:
+                count += 1
+        for tip_idx, pip_idx in zip(tips[1:], pip[1:]):
+            if landmarks.landmark[tip_idx].y < landmarks.landmark[pip_idx].y:
+                count += 1
+        return count
+
+    # HELLO detection
+    def detect_hello(self, landmarks, fingers):
+        current_time = time.time()
+        if fingers < 5:
+            self.prev_wrist_x = None
+            self.wave_count = 0
+            self.direction = 0
+            return current_time < self.show_hello_until
+
+        wrist_x = landmarks.landmark[0].x
+        if self.prev_wrist_x is not None:
+            dx = wrist_x - self.prev_wrist_x
+            current_dir = 1 if dx > 0.02 else -1 if dx < -0.02 else 0
+            if current_dir != 0 and current_dir != self.direction:
+                self.wave_count += 1
+                self.direction = current_dir
+                self.last_wave_time = current_time
+            if current_time - self.last_wave_time > 1.5:
+                self.wave_count = 0
+                self.direction = 0
+            if self.wave_count >= 3:
+                self.show_hello_until = current_time + 3
+                self.wave_count = 0
+                return True
+        self.prev_wrist_x = wrist_x
+        return current_time < self.show_hello_until
+
+    # OK detection
+    def detect_ok(self, landmarks, fingers):
+        current_time = time.time()
+        thumb_tip = landmarks.landmark[4]
+        index_tip = landmarks.landmark[8]
+        middle_tip = landmarks.landmark[12]
+        ring_tip = landmarks.landmark[16]
+        pinky_tip = landmarks.landmark[20]
+        wrist = landmarks.landmark[0]
+        index_mcp = landmarks.landmark[5]
+
+        dist_thumb_index = np.linalg.norm(
+            np.array([thumb_tip.x, thumb_tip.y]) - np.array([index_tip.x, index_tip.y])
+        )
+        hand_size = np.linalg.norm(
+            np.array([wrist.x, wrist.y]) - np.array([index_mcp.x, index_mcp.y])
+        )
+        normalized_dist = dist_thumb_index / hand_size
+
+        other_fingers_folded = (
+            middle_tip.y > landmarks.landmark[10].y and
+            ring_tip.y > landmarks.landmark[14].y and
+            pinky_tip.y > landmarks.landmark[18].y
+        )
+
+        if normalized_dist < 0.25 and fingers >= 3 and other_fingers_folded:
+            self.ok_stable_frames += 1
+        else:
+            self.ok_stable_frames = 0
+
+        if self.ok_stable_frames >= self.OK_FRAMES_REQUIRED:
+            self.show_ok_until = current_time + 3
+            self.ok_stable_frames = 0
+            return True
+
+        return current_time < self.show_ok_until
+
+    def get_gesture_text(self, landmarks, handedness):
+        fingers = self.fingers_up(landmarks, handedness)
+        self.finger_history.append(fingers)
+        smoothed_fingers = round(sum(self.finger_history) / len(self.finger_history))
+
+        if self.detect_ok(landmarks, smoothed_fingers):
+            return 'Deven says OK :)', (0, 255, 255)
+        elif self.detect_hello(landmarks, smoothed_fingers):
+            return 'Deven saying "HELLO" :)', (0, 200, 255)
+        else:
+            if smoothed_fingers == 0:
+                return "Closed", (0, 0, 255)
+            elif smoothed_fingers == 5:
+                return "Open", (0, 255, 0)
+            else:
+                return str(smoothed_fingers), (255, 0, 0)
+
+def main():
+    cap = cv2.VideoCapture(0)
+    recognizer = GestureRecognizer()
+
+    # Try sunglasses overlay
+    sunglasses = cv2.imread("sunglasses.png", cv2.IMREAD_UNCHANGED)
+    use_sunglasses = sunglasses is not None
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame = cv2.flip(frame, 1)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        result_hands = recognizer.hands.process(rgb)
+        result_face = recognizer.face_detection.process(rgb)
+        image = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+        gesture_text = "Deven, show your hands"
+        text_color = (0, 255, 255)
+        rect_color = (30, 30, 30)
+
+        # --- Hands ---
+        if result_hands.multi_hand_landmarks and result_hands.multi_handedness:
+            landmarks = result_hands.multi_hand_landmarks[0]
+            handedness = result_hands.multi_handedness[0].classification[0].label
+            recognizer.mp_draw.draw_landmarks(image, landmarks, recognizer.mp_hands.HAND_CONNECTIONS)
+            gesture_text, text_color = recognizer.get_gesture_text(landmarks, handedness)
+
+        # --- Face ---
+        if result_face.detections:
+            for detection in result_face.detections:
+                bboxC = detection.location_data.relative_bounding_box
+                ih, iw, _ = image.shape
+                x, y, w, h = int(bboxC.xmin * iw), int(bboxC.ymin * ih), int(bboxC.width * iw), int(bboxC.height * ih)
+
+                # Clip bbox inside frame
+                x, y = max(0, x), max(0, y)
+                w, h = min(iw - x, w), min(ih - y, h)
+
+                face_roi = image[y:y+h, x:x+w]
+                if face_roi.size > 0:
+                    smooth = cv2.bilateralFilter(face_roi, 5, 50, 50)
+                    image[y:y+h, x:x+w] = smooth
+
+                if use_sunglasses:
+                    sg_h, sg_w = int(h * 0.4), w
+                    sg_y = y + int(h * 0.25)
+                    sg_x = x
+                    if sg_y+sg_h < ih and sg_x+sg_w < iw:
+                        sg_resized = cv2.resize(sunglasses, (sg_w, sg_h))
+                        alpha_s = sg_resized[:, :, 3] / 255.0
+                        alpha_l = 1.0 - alpha_s
+                        for c in range(3):
+                            image[sg_y:sg_y+sg_h, sg_x:sg_x+sg_w, c] = (
+                                alpha_s * sg_resized[:, :, c] +
+                                alpha_l * image[sg_y:sg_y+sg_h, sg_x:sg_x+sg_w, c]
+                            )
+
+        # --- UI Text ---
+        (w, h), _ = cv2.getTextSize(gesture_text, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 2)
+        overlay = image.copy()
+        cv2.rectangle(overlay, (40, 30), (40 + w + 20, 30 + h + 20), rect_color, -1)
+        cv2.addWeighted(overlay, 0.9, image, 0.1, 0, image)
+
+        cv2.putText(image, gesture_text, (50, 30 + h), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0,0,0), 6)
+        cv2.putText(image, gesture_text, (50, 30 + h), cv2.FONT_HERSHEY_SIMPLEX, 1.5, text_color, 3)
+
+        cv2.imshow("Hand + Face Filter", image)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()
+
+
+
+///// commit 5 ended here 
